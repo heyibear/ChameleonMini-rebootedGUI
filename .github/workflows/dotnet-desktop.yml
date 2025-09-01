@@ -14,8 +14,6 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0  # Fetch full history for GitVersion
     
     - name: Setup .NET Framework
       uses: microsoft/setup-msbuild@v2
@@ -24,19 +22,6 @@ jobs:
       uses: nuget/setup-nuget@v2
       with:
         nuget-version: 'latest'
-    
-    - name: Install GitVersion
-      uses: gittools/actions/gitversion/setup@v1.1.1
-      with:
-        versionSpec: '5.x'
-    
-    - name: Determine Version
-      id: gitversion
-      uses: gittools/actions/gitversion/execute@v1.1.1
-      with:
-        useConfigFile: true
-        configFilePath: GitVersion.yml
-        updateAssemblyInfo: true
     
     - name: Restore NuGet packages
       run: |
@@ -88,8 +73,8 @@ jobs:
     - name: Create release package
       run: |
         $releaseDir = "ChameleonMiniGUI\bin\Release"
-        $version = "${{ steps.gitversion.outputs.semVer }}"
-        $archiveName = "ChameleonMiniGUI-$version.zip"
+        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $archiveName = "ChameleonMiniGUI-$timestamp.zip"
         
         # Create zip archive
         Compress-Archive -Path "$releaseDir\*" -DestinationPath $archiveName -Force
@@ -100,7 +85,7 @@ jobs:
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: ChameleonMiniGUI-${{ steps.gitversion.outputs.semVer }}
+        name: ChameleonMiniGUI-Build-${{ github.run_number }}
         path: |
           ChameleonMiniGUI/bin/Release/
           !ChameleonMiniGUI/bin/Release/*.pdb
@@ -112,54 +97,3 @@ jobs:
         name: ChameleonMiniGUI-Release-Package
         path: ChameleonMiniGUI-*.zip
         retention-days: 90
-
-  release:
-    needs: build
-    runs-on: windows-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    
-    - name: Setup GitVersion
-      uses: gittools/actions/gitversion/setup@v1.1.1
-      with:
-        versionSpec: '5.x'
-    
-    - name: Determine Version
-      id: gitversion
-      uses: gittools/actions/gitversion/execute@v1.1.1
-    
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: ChameleonMiniGUI-Release-Package
-    
-    - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
-      if: steps.gitversion.outputs.preReleaseTag == ''
-      with:
-        tag_name: v${{ steps.gitversion.outputs.semVer }}
-        name: ChameleonMini GUI v${{ steps.gitversion.outputs.semVer }}
-        body: |
-          ## ChameleonMini GUI Release v${{ steps.gitversion.outputs.semVer }}
-          
-          ### Changes
-          - Automated build from commit ${{ github.sha }}
-          
-          ### Download
-          - Download the `ChameleonMiniGUI-*.zip` file below
-          - Extract and run `ChameleonMiniGUI.exe`
-          
-          ### Requirements
-          - Windows 7 or later
-          - .NET Framework 4.7.2 or later
-        files: |
-          ChameleonMiniGUI-*.zip
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
