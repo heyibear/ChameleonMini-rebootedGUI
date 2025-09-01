@@ -3,6 +3,8 @@ name: Build ChameleonMini GUI
 on:
   push:
     branches: [ main, master, develop ]
+    tags:
+      - 'v*'
   pull_request:
     branches: [ main, master, develop ]
   workflow_dispatch:
@@ -137,13 +139,25 @@ jobs:
     - name: Create release package
       run: |
         $releaseDir = "ChameleonMiniGUI\bin\Release"
-        $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-        $archiveName = "ChameleonMiniGUI-$timestamp.zip"
+        
+        # Determine version from tag or use timestamp
+        if ($env:GITHUB_REF -match "refs/tags/(.*)") {
+          $version = $matches[1]
+          $archiveName = "ChameleonMiniGUI-$version.zip"
+        } else {
+          $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+          $version = $timestamp
+          $archiveName = "ChameleonMiniGUI-$timestamp.zip"
+        }
         
         # Create zip archive
         Compress-Archive -Path "$releaseDir\*" -DestinationPath $archiveName -Force
         
         Write-Host "Created release package: $archiveName" -ForegroundColor Green
+        
+        # Set output for later steps
+        echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
+        echo "VERSION=$version" >> $env:GITHUB_ENV
       shell: powershell
     
     - name: Upload build artifacts
@@ -161,3 +175,37 @@ jobs:
         name: ChameleonMiniGUI-Release-Package
         path: ChameleonMiniGUI-*.zip
         retention-days: 90
+    
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Release ${{ env.VERSION }}
+        tag_name: ${{ env.VERSION }}
+        body: |
+          ## ChameleonMini GUI Release ${{ env.VERSION }}
+          
+          ### What's New
+          - Automated build from tag ${{ env.VERSION }}
+          - Includes all necessary dependencies
+          
+          ### Files
+          - `${{ env.ARCHIVE_NAME }}` - Complete application package with all dependencies
+          
+          ### Installation
+          1. Download the zip file
+          2. Extract to your desired location
+          3. Run `ChameleonMiniGUI.exe`
+          
+          ### System Requirements
+          - Windows 7 or later
+          - .NET Framework 4.6.1 or later
+          
+          ---
+          Built automatically from commit ${{ github.sha }}
+        files: |
+          ${{ env.ARCHIVE_NAME }}
+        draft: false
+        prerelease: ${{ contains(env.VERSION, 'alpha') || contains(env.VERSION, 'beta') || contains(env.VERSION, 'rc') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
