@@ -23,6 +23,9 @@ jobs:
       with:
         nuget-version: 'latest'
     
+    - name: Setup VSTest Platform
+      uses: darenm/Setup-VSTest@v1
+    
     - name: Restore NuGet packages
       run: |
         nuget restore ChameleonMiniGUI.sln -PackagesDirectory packages
@@ -30,17 +33,31 @@ jobs:
     - name: Build solution
       run: |
         msbuild ChameleonMiniGUI.sln /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=bin\Release\
+        msbuild ChameleonMiniGUI.sln /p:Configuration=Debug /p:Platform="Any CPU" /p:OutputPath=bin\Debug\
     
     - name: Copy dependencies to output directory
       run: |
-        # Copy HexBox DLL
+        # Copy HexBox DLL to Release
         Copy-Item "Be.Windows.Forms.HexBox\bin\Release\Be.Windows.Forms.HexBox.dll" "ChameleonMiniGUI\bin\Release\" -Force
         
-        # Copy Crapto1Sharp DLL
+        # Copy Crapto1Sharp DLL to Release
         Copy-Item "packages\Crapto1Sharp.1.2.2\lib\net45\Crapto1Sharp.dll" "ChameleonMiniGUI\bin\Release\" -Force
         
-        # Copy DynamicExpresso DLL
+        # Copy DynamicExpresso DLL to Release
         Copy-Item "packages\DynamicExpresso.Core.2.0.0\lib\net461\DynamicExpresso.Core.dll" "ChameleonMiniGUI\bin\Release\" -Force
+        
+        # Copy HexBox DLL to Debug (use Debug version if available, otherwise Release)
+        if (Test-Path "Be.Windows.Forms.HexBox\bin\Debug\Be.Windows.Forms.HexBox.dll") {
+          Copy-Item "Be.Windows.Forms.HexBox\bin\Debug\Be.Windows.Forms.HexBox.dll" "ChameleonMiniGUI\bin\Debug\" -Force
+        } else {
+          Copy-Item "Be.Windows.Forms.HexBox\bin\Release\Be.Windows.Forms.HexBox.dll" "ChameleonMiniGUI\bin\Debug\" -Force
+        }
+        
+        # Copy Crapto1Sharp DLL to Debug
+        Copy-Item "packages\Crapto1Sharp.1.2.2\lib\net45\Crapto1Sharp.dll" "ChameleonMiniGUI\bin\Debug\" -Force
+        
+        # Copy DynamicExpresso DLL to Debug
+        Copy-Item "packages\DynamicExpresso.Core.2.0.0\lib\net461\DynamicExpresso.Core.dll" "ChameleonMiniGUI\bin\Debug\" -Force
       shell: powershell
     
     - name: Verify build outputs
@@ -62,7 +79,54 @@ jobs:
           msbuild ChameleonTest\ChameleonTest.sln /p:Configuration=Release
           
           if (Test-Path "ChameleonTest\ChameleonTest\bin\Release\ChameleonTest.dll") {
-            vstest.console.exe "ChameleonTest\ChameleonTest\bin\Release\ChameleonTest.dll"
+            # Try to find VSTest.Console.exe in common locations
+            $vstestPaths = @(
+              "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe",
+              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe",
+              "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe",
+              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Professional\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe",
+              "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe",
+              "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\TestWindow\vstest.console.exe"
+            )
+            
+            $vstestExe = $null
+            foreach ($path in $vstestPaths) {
+              if (Test-Path $path) {
+                $vstestExe = $path
+                break
+              }
+            }
+            
+            if ($vstestExe) {
+              Write-Host "Found VSTest at: $vstestExe" -ForegroundColor Green
+              & "$vstestExe" "ChameleonTest\ChameleonTest\bin\Release\ChameleonTest.dll" --logger:console
+            } else {
+              Write-Host "VSTest.Console.exe not found, trying alternative method..." -ForegroundColor Yellow
+              # Alternative: Use MSTest directly if available
+              $mstestPaths = @(
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\MSTest.exe",
+                "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\Common7\IDE\MSTest.exe",
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\Common7\IDE\MSTest.exe",
+                "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Professional\Common7\IDE\MSTest.exe",
+                "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\IDE\MSTest.exe",
+                "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Community\Common7\IDE\MSTest.exe"
+              )
+              
+              $mstestExe = $null
+              foreach ($path in $mstestPaths) {
+                if (Test-Path $path) {
+                  $mstestExe = $path
+                  break
+                }
+              }
+              
+              if ($mstestExe) {
+                Write-Host "Found MSTest at: $mstestExe" -ForegroundColor Green
+                & "$mstestExe" /testcontainer:"ChameleonTest\ChameleonTest\bin\Release\ChameleonTest.dll"
+              } else {
+                Write-Host "Neither VSTest nor MSTest found. Tests will be skipped." -ForegroundColor Yellow
+              }
+            }
           }
         } else {
           Write-Host "No tests found, skipping test execution" -ForegroundColor Yellow
