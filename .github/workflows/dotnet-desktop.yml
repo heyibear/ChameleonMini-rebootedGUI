@@ -1,0 +1,165 @@
+name: Build ChameleonMini GUI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch full history for GitVersion
+    
+    - name: Setup .NET Framework
+      uses: microsoft/setup-msbuild@v2
+    
+    - name: Setup NuGet
+      uses: nuget/setup-nuget@v2
+      with:
+        nuget-version: 'latest'
+    
+    - name: Install GitVersion
+      uses: gittools/actions/gitversion/setup@v1.1.1
+      with:
+        versionSpec: '5.x'
+    
+    - name: Determine Version
+      id: gitversion
+      uses: gittools/actions/gitversion/execute@v1.1.1
+      with:
+        useConfigFile: true
+        configFilePath: GitVersion.yml
+        updateAssemblyInfo: true
+    
+    - name: Restore NuGet packages
+      run: |
+        nuget restore ChameleonMiniGUI.sln -PackagesDirectory packages
+    
+    - name: Build solution
+      run: |
+        msbuild ChameleonMiniGUI.sln /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=bin\Release\
+    
+    - name: Copy dependencies to output directory
+      run: |
+        # Copy HexBox DLL
+        Copy-Item "Be.Windows.Forms.HexBox\bin\Release\Be.Windows.Forms.HexBox.dll" "ChameleonMiniGUI\bin\Release\" -Force
+        
+        # Copy Crapto1Sharp DLL
+        Copy-Item "packages\Crapto1Sharp.1.2.2\lib\net45\Crapto1Sharp.dll" "ChameleonMiniGUI\bin\Release\" -Force
+        
+        # Copy DynamicExpresso DLL
+        Copy-Item "packages\DynamicExpresso.Core.2.0.0\lib\net461\DynamicExpresso.Core.dll" "ChameleonMiniGUI\bin\Release\" -Force
+      shell: powershell
+    
+    - name: Verify build outputs
+      run: |
+        if (!(Test-Path "Be.Windows.Forms.HexBox\bin\Release\Be.Windows.Forms.HexBox.dll")) {
+          throw "HexBox DLL not found"
+        }
+        if (!(Test-Path "ChameleonMiniGUI\bin\Release\ChameleonMiniGUI.exe")) {
+          throw "Main executable not found"
+        }
+        Write-Host "Build verification passed" -ForegroundColor Green
+      shell: powershell
+    
+    - name: Run tests (if available)
+      run: |
+        if (Test-Path "ChameleonTest\ChameleonTest.sln") {
+          Write-Host "Running tests..." -ForegroundColor Yellow
+          nuget restore ChameleonTest\ChameleonTest.sln -PackagesDirectory ChameleonTest\packages
+          msbuild ChameleonTest\ChameleonTest.sln /p:Configuration=Release
+          
+          if (Test-Path "ChameleonTest\ChameleonTest\bin\Release\ChameleonTest.dll") {
+            vstest.console.exe "ChameleonTest\ChameleonTest\bin\Release\ChameleonTest.dll"
+          }
+        } else {
+          Write-Host "No tests found, skipping test execution" -ForegroundColor Yellow
+        }
+      shell: powershell
+      continue-on-error: true
+    
+    - name: Create release package
+      run: |
+        $releaseDir = "ChameleonMiniGUI\bin\Release"
+        $version = "${{ steps.gitversion.outputs.semVer }}"
+        $archiveName = "ChameleonMiniGUI-$version.zip"
+        
+        # Create zip archive
+        Compress-Archive -Path "$releaseDir\*" -DestinationPath $archiveName -Force
+        
+        Write-Host "Created release package: $archiveName" -ForegroundColor Green
+      shell: powershell
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ChameleonMiniGUI-${{ steps.gitversion.outputs.semVer }}
+        path: |
+          ChameleonMiniGUI/bin/Release/
+          !ChameleonMiniGUI/bin/Release/*.pdb
+        retention-days: 30
+    
+    - name: Upload release package
+      uses: actions/upload-artifact@v4
+      with:
+        name: ChameleonMiniGUI-Release-Package
+        path: ChameleonMiniGUI-*.zip
+        retention-days: 90
+
+  release:
+    needs: build
+    runs-on: windows-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup GitVersion
+      uses: gittools/actions/gitversion/setup@v1.1.1
+      with:
+        versionSpec: '5.x'
+    
+    - name: Determine Version
+      id: gitversion
+      uses: gittools/actions/gitversion/execute@v1.1.1
+    
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: ChameleonMiniGUI-Release-Package
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: steps.gitversion.outputs.preReleaseTag == ''
+      with:
+        tag_name: v${{ steps.gitversion.outputs.semVer }}
+        name: ChameleonMini GUI v${{ steps.gitversion.outputs.semVer }}
+        body: |
+          ## ChameleonMini GUI Release v${{ steps.gitversion.outputs.semVer }}
+          
+          ### Changes
+          - Automated build from commit ${{ github.sha }}
+          
+          ### Download
+          - Download the `ChameleonMiniGUI-*.zip` file below
+          - Extract and run `ChameleonMiniGUI.exe`
+          
+          ### Requirements
+          - Windows 7 or later
+          - .NET Framework 4.7.2 or later
+        files: |
+          ChameleonMiniGUI-*.zip
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
